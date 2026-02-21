@@ -14,49 +14,48 @@ export async function GET(req: NextRequest) {
       body: JSON.stringify(body),
     }).then((r) => r.json());
 
-  // Count how many pages of each status exist
-  const [activeFirst, leadFirst] = await Promise.all([
-    post('/application.list', { limit: 5, status: 'Active' }),
-    post('/application.list', { limit: 5, status: 'Lead' }),
+  // 18-month cutoff — same as the candidates route uses
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - 18);
+  const createdAfterDate = cutoff.toISOString();
+
+  const [activeRecent, activeAll] = await Promise.all([
+    post('/application.list', { limit: 10, status: 'Active', createdAfterDate }),
+    post('/application.list', { limit: 5, status: 'Active' }), // without filter for comparison
   ]);
 
-  // If candidateId provided, look up all their applications directly
+  // If candidateId provided, look up all their applications
   let candidateApps = null;
   if (candidateId) {
     candidateApps = await post('/application.list', { candidateId, limit: 50 });
   }
 
   return NextResponse.json({
-    active: {
-      sample: (activeFirst?.results ?? []).map((a: Record<string, unknown>) => ({
+    cutoff_date: createdAfterDate,
+    active_with_date_filter: {
+      count: activeRecent?.results?.length,
+      hasMore: activeRecent?.moreDataAvailable,
+      sample: (activeRecent?.results ?? []).map((a: Record<string, unknown>) => ({
         name: (a.candidate as Record<string, unknown>)?.name,
-        status: a.status,
         stage: (a.currentInterviewStage as Record<string, unknown>)?.title,
         job: (a.job as Record<string, unknown>)?.title,
-        stageOrder: (a.currentInterviewStage as Record<string, unknown>)?.orderInInterviewPlan,
+        createdAt: a.createdAt,
       })),
-      hasMore: activeFirst?.moreDataAvailable,
-      total_in_page: activeFirst?.results?.length,
     },
-    lead: {
-      sample: (leadFirst?.results ?? []).map((a: Record<string, unknown>) => ({
-        name: (a.candidate as Record<string, unknown>)?.name,
-        status: a.status,
-        stage: (a.currentInterviewStage as Record<string, unknown>)?.title,
-        job: (a.job as Record<string, unknown>)?.title,
-      })),
-      hasMore: leadFirst?.moreDataAvailable,
-      total_in_page: leadFirst?.results?.length,
-    },
+    active_without_filter_oldest_first: (activeAll?.results ?? []).map((a: Record<string, unknown>) => ({
+      name: (a.candidate as Record<string, unknown>)?.name,
+      job: (a.job as Record<string, unknown>)?.title,
+      createdAt: a.createdAt,
+    })),
     candidate_apps: candidateApps
       ? (candidateApps?.results ?? []).map((a: Record<string, unknown>) => ({
           applicationId: a.id,
           status: a.status,
           stage: (a.currentInterviewStage as Record<string, unknown>)?.title,
-          stageType: (a.currentInterviewStage as Record<string, unknown>)?.type,
           job: (a.job as Record<string, unknown>)?.title,
+          createdAt: a.createdAt,
         }))
       : null,
-    hint: candidateId ? '' : 'Add ?candidateId=<id> to see all applications for a candidate',
+    hint: candidateId ? '' : 'Add ?candidateId=<uuid> to look up a specific candidate\'s applications',
   });
 }

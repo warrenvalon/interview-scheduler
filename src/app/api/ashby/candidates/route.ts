@@ -32,19 +32,25 @@ async function fetchAllApplicationsByStatus(
       body: JSON.stringify(body),
     }).then((r) => r.json());
 
+  // Only fetch applications created in the last 18 months — eliminates Lever migration
+  // historical noise (2020-era data) and keeps only real current pipeline candidates
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - 18);
+  const createdAfterDate = cutoff.toISOString();
+
   const all: AppResult[] = [];
   let cursor: string | undefined;
 
   do {
-    const body: Record<string, unknown> = { status, limit: 100 };
+    const body: Record<string, unknown> = { status, limit: 100, createdAfterDate };
     if (jobId) body.jobId = jobId;
     if (cursor) body.cursor = cursor;
 
     const data = await post(body);
-    if (!data.success) break; // status filter not supported or error — stop
+    if (!data.success) break;
     all.push(...(data.results ?? []));
     cursor = data.nextCursor;
-  } while (cursor && all.length < 2000);
+  } while (cursor && all.length < 5000);
 
   return all;
 }
