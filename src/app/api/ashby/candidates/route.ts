@@ -29,16 +29,13 @@ export async function GET(_req: NextRequest) {
       cursor = data.nextCursor;
     } while (cursor && all.length < 10000);
 
-    // Map to the shape the frontend expects
-    // Job/stage info is fetched on-demand when clicking into a candidate
-    const candidates = all
-      .filter((c) => c.applicationIds && c.applicationIds.length > 0)
-      .map((c) => ({
-        id: c.id,
-        name: c.name,
-        email: c.emailAddresses?.[0]?.value ?? '',
-        applicationId: c.applicationIds![c.applicationIds!.length - 1], // most recent
-      }));
+    // Map to the shape the frontend expects — no filtering here, show everyone
+    const candidates = all.map((c) => ({
+      id: c.id,
+      name: c.name,
+      email: c.emailAddresses?.[0]?.value ?? '',
+      applicationId: c.applicationIds?.[c.applicationIds.length - 1], // most recent
+    }));
 
     return NextResponse.json({ candidates, total: candidates.length });
   } catch (err) {
