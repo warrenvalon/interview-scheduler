@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { AshbyCandidate, AshbyInterviewStage, ScheduleProposal, ScheduleBlock } from '@/types';
+import { AshbyCandidate, ScheduleProposal, ScheduleBlock } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -16,7 +16,7 @@ import { Calendar, Clock, RefreshCw, Check, User } from 'lucide-react';
 export default function SchedulePage() {
   const { candidateId } = useParams<{ candidateId: string }>();
   const [candidate, setCandidate] = useState<AshbyCandidate | null>(null);
-  const [stages, setStages] = useState<AshbyInterviewStage[]>([]);
+  const [stages, setStages] = useState<Array<{ id: string; ashbyStageId: string; stageName: string }>>([]);
   const [selectedStageId, setSelectedStageId] = useState('');
   const [proposals, setProposals] = useState<ScheduleProposal[]>([]);
   const [selectedProposalIndex, setSelectedProposalIndex] = useState(0);
@@ -25,19 +25,14 @@ export default function SchedulePage() {
   const [confirmed, setConfirmed] = useState(false);
 
   useEffect(() => {
-    fetch(`/api/ashby/candidates/${candidateId}`)
-      .then((r) => r.json())
-      .then((data) => {
-        const c = data.candidate as AshbyCandidate;
-        if (c) {
-          setCandidate(c);
-          if (c.jobId) {
-            fetch(`/api/ashby/interview-stages?jobId=${c.jobId}`)
-              .then((r) => r.json())
-              .then((d) => setStages(d.stages ?? []));
-          }
-        }
-      });
+    // Load candidate info and configured stages in parallel
+    Promise.all([
+      fetch(`/api/ashby/candidates/${candidateId}`).then((r) => r.json()),
+      fetch('/api/admin/stage-configs').then((r) => r.json()),
+    ]).then(([candidateData, stageData]) => {
+      if (candidateData.candidate) setCandidate(candidateData.candidate);
+      setStages(stageData.configs ?? []);
+    });
   }, [candidateId]);
 
   async function generateProposals() {
@@ -118,12 +113,12 @@ export default function SchedulePage() {
         <CardContent className="flex gap-3">
           <Select value={selectedStageId} onValueChange={setSelectedStageId}>
             <SelectTrigger className="w-72">
-              <SelectValue placeholder="Choose a stage..." />
+              <SelectValue placeholder={stages.length === 0 ? 'No stages configured yet' : 'Choose a stage...'} />
             </SelectTrigger>
             <SelectContent>
               {stages.map((s) => (
-                <SelectItem key={s.id} value={s.id}>
-                  {s.title}
+                <SelectItem key={s.id} value={s.ashbyStageId}>
+                  {s.stageName}
                 </SelectItem>
               ))}
             </SelectContent>
