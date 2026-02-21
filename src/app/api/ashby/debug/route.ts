@@ -5,46 +5,58 @@ export async function GET(req: NextRequest) {
   const API_KEY = process.env.ASHBY_API_KEY!;
   const credentials = Buffer.from(`${API_KEY}:`).toString('base64');
   const { searchParams } = new URL(req.url);
-  const email = searchParams.get('email'); // e.g. ?email=jjl.underwood@gmail.com
+  const candidateId = searchParams.get('candidateId');
 
   const post = (endpoint: string, body: object) =>
     fetch(`https://api.ashbyhq.com${endpoint}`, {
       method: 'POST',
-      headers: { 'Authorization': `Basic ${credentials}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Basic ${credentials}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }).then((r) => r.json());
 
-  // Count applications by status
-  const [activeApps, leadApps, archivedSample] = await Promise.all([
+  // Count how many pages of each status exist
+  const [activeFirst, leadFirst] = await Promise.all([
     post('/application.list', { limit: 5, status: 'Active' }),
     post('/application.list', { limit: 5, status: 'Lead' }),
-    post('/application.list', { limit: 5, status: 'Archived' }),
   ]);
 
-  // Look up a specific candidate by email if provided
-  let candidateSearch = null;
-  if (email) {
-    candidateSearch = await post('/candidate.search', { email });
+  // If candidateId provided, look up all their applications directly
+  let candidateApps = null;
+  if (candidateId) {
+    candidateApps = await post('/application.list', { candidateId, limit: 50 });
   }
 
   return NextResponse.json({
-    active_apps_count: activeApps?.results?.length,
-    active_apps_more: activeApps?.moreDataAvailable,
-    active_sample: (activeApps?.results ?? []).map((a: Record<string, unknown>) => ({
-      candidateName: (a.candidate as Record<string, unknown>)?.name,
-      status: a.status,
-      stage: (a.currentInterviewStage as Record<string, unknown>)?.title,
-      job: (a.job as Record<string, unknown>)?.title,
-    })),
-    lead_apps_count: leadApps?.results?.length,
-    lead_sample: (leadApps?.results ?? []).map((a: Record<string, unknown>) => ({
-      candidateName: (a.candidate as Record<string, unknown>)?.name,
-      status: a.status,
-      stage: (a.currentInterviewStage as Record<string, unknown>)?.title,
-      job: (a.job as Record<string, unknown>)?.title,
-    })),
-    archived_sample_statuses: (archivedSample?.results ?? []).map((a: Record<string, unknown>) => a.status),
-    candidate_search: candidateSearch,
-    hint: email ? '' : 'Add ?email=jjl.underwood@gmail.com to look up a specific candidate',
+    active: {
+      sample: (activeFirst?.results ?? []).map((a: Record<string, unknown>) => ({
+        name: (a.candidate as Record<string, unknown>)?.name,
+        status: a.status,
+        stage: (a.currentInterviewStage as Record<string, unknown>)?.title,
+        job: (a.job as Record<string, unknown>)?.title,
+        stageOrder: (a.currentInterviewStage as Record<string, unknown>)?.orderInInterviewPlan,
+      })),
+      hasMore: activeFirst?.moreDataAvailable,
+      total_in_page: activeFirst?.results?.length,
+    },
+    lead: {
+      sample: (leadFirst?.results ?? []).map((a: Record<string, unknown>) => ({
+        name: (a.candidate as Record<string, unknown>)?.name,
+        status: a.status,
+        stage: (a.currentInterviewStage as Record<string, unknown>)?.title,
+        job: (a.job as Record<string, unknown>)?.title,
+      })),
+      hasMore: leadFirst?.moreDataAvailable,
+      total_in_page: leadFirst?.results?.length,
+    },
+    candidate_apps: candidateApps
+      ? (candidateApps?.results ?? []).map((a: Record<string, unknown>) => ({
+          applicationId: a.id,
+          status: a.status,
+          stage: (a.currentInterviewStage as Record<string, unknown>)?.title,
+          stageType: (a.currentInterviewStage as Record<string, unknown>)?.type,
+          job: (a.job as Record<string, unknown>)?.title,
+        }))
+      : null,
+    hint: candidateId ? '' : 'Add ?candidateId=<id> to see all applications for a candidate',
   });
 }
