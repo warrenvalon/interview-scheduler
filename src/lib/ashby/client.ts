@@ -33,19 +33,24 @@ export async function listCandidates(params: {
   cursor?: string;
   limit?: number;
 }): Promise<{ candidates: AshbyCandidate[]; nextCursor?: string }> {
-  // Use application.list so we get job/stage info per record and can filter by status
-  const body: Record<string, unknown> = { limit: params.limit ?? 100 };
+  // Use application.list with status:'Active' so we only get active pipeline candidates
+  // (avoids paginating through thousands of historical Archived/Hired records)
+  const body: Record<string, unknown> = {
+    limit: params.limit ?? 100,
+    status: 'Active',
+  };
   if (params.jobId) body.jobId = params.jobId;
   if (params.cursor) body.cursor = params.cursor;
 
   const data = await ashbyPost<{
     results: Array<{
       id: string;
-      status: string; // Active | Hired | Archived | Lead
+      status: string;
       candidate: {
         id: string;
         name: string;
-        emailAddresses?: Array<{ value: string }>;
+        // application.list returns primaryEmailAddress, not emailAddresses array
+        primaryEmailAddress?: { value: string };
       };
       job?: { id: string; title: string };
       currentInterviewStage?: { id: string; title: string };
@@ -53,15 +58,10 @@ export async function listCandidates(params: {
     nextCursor?: string;
   }>('/application.list', body);
 
-  // Only show active candidates — exclude hired and archived/rejected
-  const active = (data.results ?? []).filter(
-    (app) => app.status !== 'Hired' && app.status !== 'Archived'
-  );
-
-  const candidates: AshbyCandidate[] = active.map((app) => ({
+  const candidates: AshbyCandidate[] = (data.results ?? []).map((app) => ({
     id: app.candidate.id,
     name: app.candidate.name,
-    email: app.candidate.emailAddresses?.[0]?.value ?? '',
+    email: app.candidate.primaryEmailAddress?.value ?? '',
     applicationId: app.id,
     jobTitle: app.job?.title,
     jobId: app.job?.id,
@@ -73,51 +73,47 @@ export async function listCandidates(params: {
 }
 
 export async function getCandidate(candidateId: string): Promise<AshbyCandidate> {
-  const res = await ashbyPost<{
-    results: {
+  // Use application.list filtered to this candidate to get active application + job/stage
+  const appsRes = await ashbyPost<{
+    results: Array<{
       id: string;
-      name: string;
-      emailAddresses?: Array<{ value: string }>;
-      applicationIds?: string[];
+      status: string;
+      candidate: {
+        id: string;
+        name: string;
+        primaryEmailAddress?: { value: string };
+      };
+      job?: { id: string; title: string };
+      currentInterviewStage?: { id: string; title: string };
+    }>;
+  }>('/application.list', { candidateId, limit: 50 });
+
+  // Prefer active application; fall back to most recent if none active
+  const apps = appsRes.results ?? [];
+  const activeApp = apps.find((a) => a.status === 'Active') ?? apps[0];
+
+  if (!activeApp) {
+    // Last resort: candidate.info for name/email only
+    const res = await ashbyPost<{
+      results: { id: string; name: string; primaryEmailAddress?: { value: string }; emailAddresses?: Array<{ value: string }> };
+    }>('/candidate.info', { id: candidateId });
+    const c = res.results;
+    return {
+      id: c.id,
+      name: c.name,
+      email: c.primaryEmailAddress?.value ?? c.emailAddresses?.[0]?.value ?? '',
     };
-  }>('/candidate.info', { id: candidateId });
-
-  const c = res.results;
-  const applicationId = c.applicationIds?.[0];
-
-  // Fetch application details to get job + stage info
-  let jobTitle: string | undefined;
-  let jobId: string | undefined;
-  let currentStage: string | undefined;
-  let currentStageId: string | undefined;
-
-  if (applicationId) {
-    try {
-      const appRes = await ashbyPost<{
-        results: {
-          id: string;
-          job?: { id: string; title: string };
-          currentInterviewStage?: { id: string; title: string };
-        };
-      }>('/application.info', { id: applicationId });
-      jobTitle = appRes.results?.job?.title;
-      jobId = appRes.results?.job?.id;
-      currentStage = appRes.results?.currentInterviewStage?.title;
-      currentStageId = appRes.results?.currentInterviewStage?.id;
-    } catch {
-      // non-fatal
-    }
   }
 
   return {
-    id: c.id,
-    name: c.name,
-    email: c.emailAddresses?.[0]?.value ?? '',
-    jobTitle,
-    jobId,
-    currentStage,
-    currentStageId,
-    applicationId,
+    id: activeApp.candidate.id,
+    name: activeApp.candidate.name,
+    email: activeApp.candidate.primaryEmailAddress?.value ?? '',
+    applicationId: activeApp.id,
+    jobTitle: activeApp.job?.title,
+    jobId: activeApp.job?.id,
+    currentStage: activeApp.currentInterviewStage?.title,
+    currentStageId: activeApp.currentInterviewStage?.id,
   };
 }
 
