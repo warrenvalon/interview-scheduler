@@ -56,12 +56,12 @@ export default function CandidatesPage() {
           <form onSubmit={handleSearch} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Candidate Email
+                Candidate Email or Ashby URL
               </label>
               <div className="flex gap-3">
                 <Input
-                  type="email"
-                  placeholder="candidate@email.com"
+                  type="text"
+                  placeholder="candidate@email.com or paste Ashby profile URL"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="flex-1"

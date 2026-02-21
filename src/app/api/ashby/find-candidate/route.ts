@@ -9,13 +9,26 @@ function ashbyPost(endpoint: string, body: object) {
   }).then((r) => r.json());
 }
 
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
 export async function POST(req: NextRequest) {
   const { email } = await req.json();
-  if (!email) return NextResponse.json({ error: 'Email required' }, { status: 400 });
+  if (!email) return NextResponse.json({ error: 'Email or Ashby URL required' }, { status: 400 });
 
-  const normalizedEmail = email.trim().toLowerCase();
+  const input = email.trim();
 
-  // Strategy 1: Ashby candidate.search by email
+  // Strategy 1: If input contains a UUID (from an Ashby URL or pasted directly), use it directly
+  const uuidMatch = input.match(UUID_RE);
+  if (uuidMatch) {
+    const candidateId = uuidMatch[0];
+    const res = await ashbyPost('/candidate.info', { id: candidateId });
+    if (res.success && res.results?.id) {
+      return NextResponse.json(await buildResult(res.results));
+    }
+  }
+
+  // Strategy 2: Ashby native search by email
+  const normalizedEmail = input.toLowerCase();
   try {
     const res = await ashbyPost('/candidate.search', { email: normalizedEmail });
     if (res.success && res.results?.id) {
@@ -23,25 +36,45 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* try next */ }
 
-  // Strategy 2: scan candidate.list comparing email addresses (up to 50 pages / 5000 candidates)
+  // Strategy 3: scan application.list for email match (checks primaryEmailAddress on each app)
   let cursor: string | undefined;
-  for (let page = 0; page < 50; page++) {
+  for (let page = 0; page < 100; page++) {
     const body: Record<string, unknown> = { limit: 100 };
     if (cursor) body.cursor = cursor;
-    const data = await ashbyPost('/candidate.list', body);
+    const data = await ashbyPost('/application.list', body);
     if (!data.success || !data.results?.length) break;
 
-    const match = data.results.find((c: { emailAddresses?: Array<{ value: string }> }) =>
-      c.emailAddresses?.some((e) => e.value.toLowerCase() === normalizedEmail)
+    const match = data.results.find(
+      (a: { candidate?: { primaryEmailAddress?: { value: string } } }) =>
+        a.candidate?.primaryEmailAddress?.value?.toLowerCase() === normalizedEmail
     );
 
-    if (match) return NextResponse.json(await buildResult(match));
+    if (match) {
+      // Build result from the application directly
+      const app = match as {
+        candidate: { id: string; name: string; primaryEmailAddress?: { value: string } };
+        id: string;
+        status: string;
+        job?: { id: string; title: string };
+        currentInterviewStage?: { id: string; title: string };
+      };
+      return NextResponse.json({
+        candidateId: app.candidate.id,
+        name: app.candidate.name,
+        email: app.candidate.primaryEmailAddress?.value ?? '',
+        applicationId: app.id,
+        jobTitle: app.job?.title,
+        jobId: app.job?.id,
+        currentStage: app.currentInterviewStage?.title,
+        currentStageId: app.currentInterviewStage?.id,
+      });
+    }
 
     cursor = data.nextCursor;
     if (!cursor) break;
   }
 
-  return NextResponse.json({ error: 'No candidate found with that email' }, { status: 404 });
+  return NextResponse.json({ error: 'No candidate found. Try pasting their Ashby profile URL instead.' }, { status: 404 });
 }
 
 async function buildResult(candidate: {
