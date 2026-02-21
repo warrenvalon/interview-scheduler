@@ -5,7 +5,7 @@ export async function GET(req: NextRequest) {
   const API_KEY = process.env.ASHBY_API_KEY!;
   const credentials = Buffer.from(`${API_KEY}:`).toString('base64');
   const { searchParams } = new URL(req.url);
-  const candidateId = searchParams.get('candidateId'); // optional: look up specific candidate
+  const email = searchParams.get('email'); // e.g. ?email=jjl.underwood@gmail.com
 
   const post = (endpoint: string, body: object) =>
     fetch(`https://api.ashbyhq.com${endpoint}`, {
@@ -14,52 +14,37 @@ export async function GET(req: NextRequest) {
       body: JSON.stringify(body),
     }).then((r) => r.json());
 
-  // Get a sample of applications to see the real structure
-  const appList = await post('/application.list', { limit: 5 });
-  const firstApp = appList?.results?.[0];
+  // Count applications by status
+  const [activeApps, leadApps, archivedSample] = await Promise.all([
+    post('/application.list', { limit: 5, status: 'Active' }),
+    post('/application.list', { limit: 5, status: 'Lead' }),
+    post('/application.list', { limit: 5, status: 'Archived' }),
+  ]);
 
-  // Get job status distribution
-  const jobList = await post('/job.list', {});
-  const statusCounts: Record<string, number> = {};
-  for (const job of jobList?.results ?? []) {
-    statusCounts[job.status] = (statusCounts[job.status] ?? 0) + 1;
+  // Look up a specific candidate by email if provided
+  let candidateSearch = null;
+  if (email) {
+    candidateSearch = await post('/candidate.search', { email });
   }
-
-  // If candidateId provided, look up their applications
-  let candidateApps = null;
-  if (candidateId) {
-    candidateApps = await post('/application.list', { candidateId });
-  }
-
-  // Also try to look up James Underwood directly by searching candidates
-  const jamesSearch = await post('/candidate.list', { limit: 5 });
 
   return NextResponse.json({
-    // Application.list structure
-    application_list_first_keys: firstApp ? Object.keys(firstApp) : [],
-    application_list_first_sample: firstApp,
-    application_list_statuses: (appList?.results ?? []).map((a: Record<string, unknown>) => ({
-      id: a.id,
+    active_apps_count: activeApps?.results?.length,
+    active_apps_more: activeApps?.moreDataAvailable,
+    active_sample: (activeApps?.results ?? []).map((a: Record<string, unknown>) => ({
+      candidateName: (a.candidate as Record<string, unknown>)?.name,
       status: a.status,
-      has_candidate_field: 'candidate' in a,
-      has_candidateId_field: 'candidateId' in a,
-      candidate_keys: a.candidate ? Object.keys(a.candidate as object) : null,
+      stage: (a.currentInterviewStage as Record<string, unknown>)?.title,
+      job: (a.job as Record<string, unknown>)?.title,
     })),
-    application_total: appList?.results?.length,
-    application_more: appList?.moreDataAvailable,
-
-    // Job status breakdown
-    job_status_distribution: statusCounts,
-    total_jobs: jobList?.results?.length,
-
-    // James search
-    first_5_candidates: (jamesSearch?.results ?? []).map((c: Record<string, unknown>) => ({
-      id: c.id,
-      name: c.name,
-      applicationIds: c.applicationIds,
+    lead_apps_count: leadApps?.results?.length,
+    lead_sample: (leadApps?.results ?? []).map((a: Record<string, unknown>) => ({
+      candidateName: (a.candidate as Record<string, unknown>)?.name,
+      status: a.status,
+      stage: (a.currentInterviewStage as Record<string, unknown>)?.title,
+      job: (a.job as Record<string, unknown>)?.title,
     })),
-
-    // Candidate-specific apps if candidateId provided
-    candidate_apps: candidateApps,
+    archived_sample_statuses: (archivedSample?.results ?? []).map((a: Record<string, unknown>) => a.status),
+    candidate_search: candidateSearch,
+    hint: email ? '' : 'Add ?email=jjl.underwood@gmail.com to look up a specific candidate',
   });
 }

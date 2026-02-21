@@ -28,37 +28,59 @@ async function ashbyPost<T>(endpoint: string, body: Record<string, unknown> = {}
   return data as T;
 }
 
+type AppResult = {
+  id: string;
+  status: string;
+  candidate: {
+    id: string;
+    name: string;
+    primaryEmailAddress?: { value: string };
+  };
+  job?: { id: string; title: string };
+  currentInterviewStage?: { id: string; title: string; orderInInterviewPlan?: number };
+};
+
+async function fetchApplicationPage(
+  body: Record<string, unknown>
+): Promise<{ results: AppResult[]; nextCursor?: string }> {
+  return ashbyPost<{ results: AppResult[]; nextCursor?: string }>('/application.list', body);
+}
+
 export async function listCandidates(params: {
   jobId?: string;
   cursor?: string;
   limit?: number;
 }): Promise<{ candidates: AshbyCandidate[]; nextCursor?: string }> {
-  // Use application.list with status:'Active' so we only get active pipeline candidates
-  // (avoids paginating through thousands of historical Archived/Hired records)
-  const body: Record<string, unknown> = {
-    limit: params.limit ?? 100,
-    status: 'Active',
-  };
-  if (params.jobId) body.jobId = params.jobId;
-  if (params.cursor) body.cursor = params.cursor;
+  // Fetch Active and Lead applications in parallel — covers all pipeline candidates
+  // including those deep in interview process (Panel Interviews, etc.)
+  const base: Record<string, unknown> = { limit: params.limit ?? 100 };
+  if (params.jobId) base.jobId = params.jobId;
+  if (params.cursor) base.cursor = params.cursor;
 
-  const data = await ashbyPost<{
-    results: Array<{
-      id: string;
-      status: string;
-      candidate: {
-        id: string;
-        name: string;
-        // application.list returns primaryEmailAddress, not emailAddresses array
-        primaryEmailAddress?: { value: string };
-      };
-      job?: { id: string; title: string };
-      currentInterviewStage?: { id: string; title: string };
-    }>;
-    nextCursor?: string;
-  }>('/application.list', body);
+  const [activeData, leadData] = await Promise.all([
+    fetchApplicationPage({ ...base, status: 'Active' }),
+    fetchApplicationPage({ ...base, status: 'Lead' }),
+  ]);
 
-  const candidates: AshbyCandidate[] = (data.results ?? []).map((app) => ({
+  const allApps = [...(activeData.results ?? []), ...(leadData.results ?? [])];
+
+  // Deduplicate by candidate ID — one candidate can have multiple applications.
+  // Keep the application with the most advanced interview stage per candidate.
+  const byCandidate = new Map<string, AppResult>();
+  for (const app of allApps) {
+    const cid = app.candidate.id;
+    const existing = byCandidate.get(cid);
+    if (!existing) {
+      byCandidate.set(cid, app);
+    } else {
+      // Prefer the application with a higher stage order (further in process)
+      const existingOrder = existing.currentInterviewStage?.orderInInterviewPlan ?? -1;
+      const newOrder = app.currentInterviewStage?.orderInInterviewPlan ?? -1;
+      if (newOrder > existingOrder) byCandidate.set(cid, app);
+    }
+  }
+
+  const candidates: AshbyCandidate[] = Array.from(byCandidate.values()).map((app) => ({
     id: app.candidate.id,
     name: app.candidate.name,
     email: app.candidate.primaryEmailAddress?.value ?? '',
@@ -69,7 +91,9 @@ export async function listCandidates(params: {
     currentStageId: app.currentInterviewStage?.id,
   }));
 
-  return { candidates, nextCursor: data.nextCursor };
+  // Return nextCursor from whichever batch still has more data
+  const nextCursor = activeData.nextCursor ?? leadData.nextCursor;
+  return { candidates, nextCursor };
 }
 
 export async function getCandidate(candidateId: string): Promise<AshbyCandidate> {
