@@ -41,29 +41,18 @@ export async function listCandidates(params: {
     results: Array<{
       id: string;
       name: string;
-      primaryEmailAddress?: { value: string };
-      openApplications?: Array<{
-        id: string;
-        job?: { id: string; title: string };
-        currentInterviewStage?: { id: string; title: string };
-      }>;
+      emailAddresses?: Array<{ value: string; type?: string }>;
+      applicationIds?: string[];
     }>;
     nextCursor?: string;
   }>('/candidate.list', body);
 
-  const candidates: AshbyCandidate[] = data.results.map((c) => {
-    const app = c.openApplications?.[0];
-    return {
-      id: c.id,
-      name: c.name,
-      email: c.primaryEmailAddress?.value ?? '',
-      jobTitle: app?.job?.title,
-      jobId: app?.job?.id,
-      currentStage: app?.currentInterviewStage?.title,
-      currentStageId: app?.currentInterviewStage?.id,
-      applicationId: app?.id,
-    };
-  });
+  const candidates: AshbyCandidate[] = (data.results ?? []).map((c) => ({
+    id: c.id,
+    name: c.name,
+    email: c.emailAddresses?.[0]?.value ?? '',
+    applicationId: c.applicationIds?.[0],
+  }));
 
   return { candidates, nextCursor: data.nextCursor };
 }
@@ -73,33 +62,54 @@ export async function getCandidate(candidateId: string): Promise<AshbyCandidate>
     results: {
       id: string;
       name: string;
-      primaryEmailAddress?: { value: string };
-      openApplications?: Array<{
-        id: string;
-        job?: { id: string; title: string };
-        currentInterviewStage?: { id: string; title: string };
-      }>;
+      emailAddresses?: Array<{ value: string }>;
+      applicationIds?: string[];
     };
   }>('/candidate.info', { id: candidateId });
 
   const c = res.results;
-  const app = c.openApplications?.[0];
+  const applicationId = c.applicationIds?.[0];
+
+  // Fetch application details to get job + stage info
+  let jobTitle: string | undefined;
+  let jobId: string | undefined;
+  let currentStage: string | undefined;
+  let currentStageId: string | undefined;
+
+  if (applicationId) {
+    try {
+      const appRes = await ashbyPost<{
+        results: {
+          id: string;
+          job?: { id: string; title: string };
+          currentInterviewStage?: { id: string; title: string };
+        };
+      }>('/application.info', { id: applicationId });
+      jobTitle = appRes.results?.job?.title;
+      jobId = appRes.results?.job?.id;
+      currentStage = appRes.results?.currentInterviewStage?.title;
+      currentStageId = appRes.results?.currentInterviewStage?.id;
+    } catch {
+      // non-fatal
+    }
+  }
+
   return {
     id: c.id,
     name: c.name,
-    email: c.primaryEmailAddress?.value ?? '',
-    jobTitle: app?.job?.title,
-    jobId: app?.job?.id,
-    currentStage: app?.currentInterviewStage?.title,
-    currentStageId: app?.currentInterviewStage?.id,
-    applicationId: app?.id,
+    email: c.emailAddresses?.[0]?.value ?? '',
+    jobTitle,
+    jobId,
+    currentStage,
+    currentStageId,
+    applicationId,
   };
 }
 
 export async function listJobs(): Promise<AshbyJob[]> {
   const data = await ashbyPost<{
     results: Array<{ id: string; title: string; status: string }>;
-  }>('/job.list', { status: 'Open' });
+  }>('/job.list', {});
 
   return (data.results ?? []).map((j) => ({
     id: j.id,
