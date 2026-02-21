@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -38,6 +38,7 @@ export default function StagesPage() {
   const [count, setCount] = useState('3');
   const [poolIds, setPoolIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const configFormRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetch('/api/ashby/jobs')
@@ -160,7 +161,13 @@ export default function StagesPage() {
                       setDuration(String(existing.durationMinutes));
                       setBreakTime(String(existing.breakMinutes));
                       setCount(String(existing.interviewerCount));
+                    } else {
+                      setDuration('60');
+                      setBreakTime('15');
+                      setCount('3');
+                      setPoolIds([]);
                     }
+                    setTimeout(() => configFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
                   }}
                 >
                   <Plus className="h-3.5 w-3.5 mr-1" />
@@ -174,7 +181,7 @@ export default function StagesPage() {
 
       {/* Config form */}
       {selectedStage && (
-        <Card>
+        <Card ref={configFormRef}>
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-base">Configure: {selectedStage.title}</CardTitle>
             <Button variant="ghost" size="sm" onClick={() => setSelectedStage(null)}>
