@@ -24,7 +24,8 @@ async function ashbyPost<T>(endpoint: string, body: Record<string, unknown> = {}
   if (!data.success) {
     throw new Error(`Ashby API error: ${data.errors?.join(', ') ?? 'Unknown error'}`);
   }
-  return data.results ?? data;
+  // Return full response so callers can access results, nextCursor, etc.
+  return data as T;
 }
 
 export async function listCandidates(params: {
@@ -68,22 +69,25 @@ export async function listCandidates(params: {
 }
 
 export async function getCandidate(candidateId: string): Promise<AshbyCandidate> {
-  const data = await ashbyPost<{
-    id: string;
-    name: string;
-    primaryEmailAddress?: { value: string };
-    openApplications?: Array<{
+  const res = await ashbyPost<{
+    results: {
       id: string;
-      job?: { id: string; title: string };
-      currentInterviewStage?: { id: string; title: string };
-    }>;
+      name: string;
+      primaryEmailAddress?: { value: string };
+      openApplications?: Array<{
+        id: string;
+        job?: { id: string; title: string };
+        currentInterviewStage?: { id: string; title: string };
+      }>;
+    };
   }>('/candidate.info', { id: candidateId });
 
-  const app = data.openApplications?.[0];
+  const c = res.results;
+  const app = c.openApplications?.[0];
   return {
-    id: data.id,
-    name: data.name,
-    email: data.primaryEmailAddress?.value ?? '',
+    id: c.id,
+    name: c.name,
+    email: c.primaryEmailAddress?.value ?? '',
     jobTitle: app?.job?.title,
     jobId: app?.job?.id,
     currentStage: app?.currentInterviewStage?.title,
@@ -97,7 +101,7 @@ export async function listJobs(): Promise<AshbyJob[]> {
     results: Array<{ id: string; title: string; status: string }>;
   }>('/job.list', { status: 'Open' });
 
-  return data.results.map((j) => ({
+  return (data.results ?? []).map((j) => ({
     id: j.id,
     title: j.title,
     status: j.status,
@@ -106,20 +110,22 @@ export async function listJobs(): Promise<AshbyJob[]> {
 
 export async function getInterviewStages(jobId: string): Promise<AshbyInterviewStage[]> {
   const data = await ashbyPost<{
-    interviewPlan?: {
-      phaseGroups?: Array<{
-        interviewStages?: Array<{
-          id: string;
-          title: string;
-          type: string;
-          orderIndex: number;
+    results?: {
+      interviewPlan?: {
+        phaseGroups?: Array<{
+          interviewStages?: Array<{
+            id: string;
+            title: string;
+            type: string;
+            orderIndex: number;
+          }>;
         }>;
-      }>;
+      };
     };
   }>('/jobInterviewPlan.info', { jobId });
 
   const stages: AshbyInterviewStage[] = [];
-  for (const group of data.interviewPlan?.phaseGroups ?? []) {
+  for (const group of data.results?.interviewPlan?.phaseGroups ?? []) {
     for (const stage of group.interviewStages ?? []) {
       stages.push({
         id: stage.id,

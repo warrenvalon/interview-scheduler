@@ -25,10 +25,10 @@ export default function SchedulePage() {
   const [confirmed, setConfirmed] = useState(false);
 
   useEffect(() => {
-    fetch(`/api/ashby/candidates?limit=1`)
+    fetch(`/api/ashby/candidates/${candidateId}`)
       .then((r) => r.json())
       .then((data) => {
-        const c = data.candidates?.find((c: AshbyCandidate) => c.id === candidateId);
+        const c = data.candidate as AshbyCandidate;
         if (c) {
           setCandidate(c);
           if (c.jobId) {
