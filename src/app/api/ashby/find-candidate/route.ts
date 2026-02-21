@@ -9,19 +9,30 @@ function ashbyPost(endpoint: string, body: object) {
   }).then((r) => r.json());
 }
 
-const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
-
 export async function POST(req: NextRequest) {
   const { email } = await req.json();
   if (!email) return NextResponse.json({ error: 'Email or Ashby URL required' }, { status: 400 });
 
   const input = email.trim();
 
-  // Strategy 1: If input contains a UUID (from an Ashby URL or pasted directly), use it directly
-  const uuidMatch = input.match(UUID_RE);
-  if (uuidMatch) {
-    const candidateId = uuidMatch[0];
+  // Strategy 1: Extract candidate ID specifically from Ashby URL pattern /candidates/UUID
+  const ashbyCandidateMatch = input.match(/\/candidates\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+  // Also grab application ID if present in URL
+  const ashbyAppMatch = input.match(/\/applications\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+
+  if (ashbyCandidateMatch) {
+    const candidateId = ashbyCandidateMatch[1];
+    const applicationId = ashbyAppMatch?.[1];
     const res = await ashbyPost('/candidate.info', { id: candidateId });
+    if (res.success && res.results?.id) {
+      return NextResponse.json(await buildResult(res.results, applicationId));
+    }
+  }
+
+  // Strategy 1b: bare UUID pasted directly
+  const bareUuid = input.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  if (bareUuid) {
+    const res = await ashbyPost('/candidate.info', { id: input });
     if (res.success && res.results?.id) {
       return NextResponse.json(await buildResult(res.results));
     }
@@ -77,23 +88,45 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ error: 'No candidate found. Try pasting their Ashby profile URL instead.' }, { status: 404 });
 }
 
-async function buildResult(candidate: {
-  id: string;
-  name: string;
-  emailAddresses?: Array<{ value: string }>;
-  primaryEmailAddress?: { value: string };
-  applicationIds?: string[];
-}) {
-  // Get their most recent non-hired/archived application
-  const appsRes = await ashbyPost('/application.list', { candidateId: candidate.id, limit: 50 });
-  const apps: Array<{
+async function buildResult(
+  candidate: {
+    id: string;
+    name: string;
+    emailAddresses?: Array<{ value: string }>;
+    primaryEmailAddress?: { value: string };
+    applicationIds?: string[];
+  },
+  specificApplicationId?: string
+) {
+  type AppShape = {
     id: string;
     status: string;
     job?: { id: string; title: string };
     currentInterviewStage?: { id: string; title: string };
-  }> = appsRes.results ?? [];
+  };
 
-  // Prefer Active, then Lead, then anything
+  // If we have a specific application ID (from the URL), use it directly
+  if (specificApplicationId) {
+    const appRes = await ashbyPost('/application.info', { id: specificApplicationId });
+    if (appRes.success && appRes.results) {
+      const r = appRes.results;
+      return {
+        candidateId: candidate.id,
+        name: candidate.name,
+        email: candidate.primaryEmailAddress?.value ?? candidate.emailAddresses?.[0]?.value ?? '',
+        applicationId: specificApplicationId,
+        jobTitle: r.job?.title,
+        jobId: r.job?.id,
+        currentStage: r.currentInterviewStage?.title,
+        currentStageId: r.currentInterviewStage?.id,
+      };
+    }
+  }
+
+  // Otherwise find their best active application
+  const appsRes = await ashbyPost('/application.list', { candidateId: candidate.id, limit: 50 });
+  const apps: AppShape[] = appsRes.results ?? [];
+
   const app =
     apps.find((a) => a.status === 'Active') ??
     apps.find((a) => a.status === 'Lead') ??
