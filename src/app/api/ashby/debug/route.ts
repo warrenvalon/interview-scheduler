@@ -6,7 +6,6 @@ export async function GET(req: NextRequest) {
   const credentials = Buffer.from(`${API_KEY}:`).toString('base64');
   const { searchParams } = new URL(req.url);
   const jobId = searchParams.get('jobId');
-  const planId = searchParams.get('planId');
 
   const post = (endpoint: string, body: object) =>
     fetch(`https://api.ashbyhq.com${endpoint}`, {
@@ -21,35 +20,30 @@ export async function GET(req: NextRequest) {
   ]);
 
   const firstJob = jobs?.results?.[0];
+  const openJobs = (jobs?.results ?? []).filter((j: { status: string }) => j.status === 'Open');
 
-  // If jobId provided, get job info and its interview plan
   let jobInfo = null;
-  let interviewPlan = null;
-  if (jobId) {
-    jobInfo = await post('/job.info', { id: jobId });
-    const resolvedPlanId = planId
-      ?? jobInfo?.results?.defaultInterviewPlanId
-      ?? jobInfo?.results?.interviewPlanIds?.[0];
-    if (resolvedPlanId) {
-      interviewPlan = await post('/jobInterviewPlan.info', { id: resolvedPlanId });
+  let interviewStages = null;
+  const testJobId = jobId ?? openJobs[0]?.id;
+
+  if (testJobId) {
+    jobInfo = await post('/job.info', { id: testJobId });
+    const planId = jobInfo?.results?.defaultInterviewPlanId ?? jobInfo?.results?.interviewPlanIds?.[0];
+    if (planId) {
+      interviewStages = await post('/interviewStage.list', { interviewPlanId: planId });
     }
   }
 
   return NextResponse.json({
     total_jobs: jobs?.results?.length ?? 0,
-    first_job_id: firstJob?.id,
-    first_job_title: firstJob?.title,
-    first_job_defaultInterviewPlanId: firstJob?.defaultInterviewPlanId,
+    open_jobs: openJobs.length,
+    first_open_job: openJobs[0] ? { id: openJobs[0].id, title: openJobs[0].title } : null,
     candidate_count: candidates?.results?.length ?? 0,
     candidates_more: candidates?.moreDataAvailable,
-    ...(jobId ? {
-      job_info_keys: jobInfo?.results ? Object.keys(jobInfo.results) : [],
-      job_defaultInterviewPlanId: jobInfo?.results?.defaultInterviewPlanId,
-      job_interviewPlanIds: jobInfo?.results?.interviewPlanIds,
-      interview_plan_raw: interviewPlan,
-    } : {
-      hint: 'Add ?jobId=<job_id> to inspect interview stages for that job',
-      first_job_id: firstJob?.id,
-    }),
+    first_job_status: firstJob?.status,
+    tested_job_id: testJobId,
+    tested_job_title: jobInfo?.results?.title,
+    plan_id: jobInfo?.results?.defaultInterviewPlanId,
+    interview_stages: interviewStages,
   });
 }
