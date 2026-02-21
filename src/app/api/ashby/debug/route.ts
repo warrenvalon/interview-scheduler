@@ -5,7 +5,7 @@ export async function GET(req: NextRequest) {
   const API_KEY = process.env.ASHBY_API_KEY!;
   const credentials = Buffer.from(`${API_KEY}:`).toString('base64');
   const { searchParams } = new URL(req.url);
-  const jobId = searchParams.get('jobId');
+  const candidateId = searchParams.get('candidateId'); // optional: look up specific candidate
 
   const post = (endpoint: string, body: object) =>
     fetch(`https://api.ashbyhq.com${endpoint}`, {
@@ -14,36 +14,52 @@ export async function GET(req: NextRequest) {
       body: JSON.stringify(body),
     }).then((r) => r.json());
 
-  const [jobs, candidates] = await Promise.all([
-    post('/job.list', {}),
-    post('/candidate.list', { limit: 3 }),
-  ]);
+  // Get a sample of applications to see the real structure
+  const appList = await post('/application.list', { limit: 5 });
+  const firstApp = appList?.results?.[0];
 
-  const firstJob = jobs?.results?.[0];
-  const openJobs = (jobs?.results ?? []).filter((j: { status: string }) => j.status === 'Open');
-
-  let jobInfo = null;
-  let interviewStages = null;
-  const testJobId = jobId ?? openJobs[0]?.id;
-
-  if (testJobId) {
-    jobInfo = await post('/job.info', { id: testJobId });
-    const planId = jobInfo?.results?.defaultInterviewPlanId ?? jobInfo?.results?.interviewPlanIds?.[0];
-    if (planId) {
-      interviewStages = await post('/interviewStage.list', { interviewPlanId: planId });
-    }
+  // Get job status distribution
+  const jobList = await post('/job.list', {});
+  const statusCounts: Record<string, number> = {};
+  for (const job of jobList?.results ?? []) {
+    statusCounts[job.status] = (statusCounts[job.status] ?? 0) + 1;
   }
 
+  // If candidateId provided, look up their applications
+  let candidateApps = null;
+  if (candidateId) {
+    candidateApps = await post('/application.list', { candidateId });
+  }
+
+  // Also try to look up James Underwood directly by searching candidates
+  const jamesSearch = await post('/candidate.list', { limit: 5 });
+
   return NextResponse.json({
-    total_jobs: jobs?.results?.length ?? 0,
-    open_jobs: openJobs.length,
-    first_open_job: openJobs[0] ? { id: openJobs[0].id, title: openJobs[0].title } : null,
-    candidate_count: candidates?.results?.length ?? 0,
-    candidates_more: candidates?.moreDataAvailable,
-    first_job_status: firstJob?.status,
-    tested_job_id: testJobId,
-    tested_job_title: jobInfo?.results?.title,
-    plan_id: jobInfo?.results?.defaultInterviewPlanId,
-    interview_stages: interviewStages,
+    // Application.list structure
+    application_list_first_keys: firstApp ? Object.keys(firstApp) : [],
+    application_list_first_sample: firstApp,
+    application_list_statuses: (appList?.results ?? []).map((a: Record<string, unknown>) => ({
+      id: a.id,
+      status: a.status,
+      has_candidate_field: 'candidate' in a,
+      has_candidateId_field: 'candidateId' in a,
+      candidate_keys: a.candidate ? Object.keys(a.candidate as object) : null,
+    })),
+    application_total: appList?.results?.length,
+    application_more: appList?.moreDataAvailable,
+
+    // Job status breakdown
+    job_status_distribution: statusCounts,
+    total_jobs: jobList?.results?.length,
+
+    // James search
+    first_5_candidates: (jamesSearch?.results ?? []).map((c: Record<string, unknown>) => ({
+      id: c.id,
+      name: c.name,
+      applicationIds: c.applicationIds,
+    })),
+
+    // Candidate-specific apps if candidateId provided
+    candidate_apps: candidateApps,
   });
 }
