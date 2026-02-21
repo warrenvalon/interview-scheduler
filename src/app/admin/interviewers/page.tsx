@@ -3,20 +3,17 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import { UserPlus, Trash2, Users } from 'lucide-react';
+import { RefreshCw, Trash2, Users, Search } from 'lucide-react';
 import { Interviewer } from '@/lib/db/schema';
 
 export default function InterviewersPage() {
   const [interviewers, setInterviewers] = useState<Interviewer[]>([]);
   const [loading, setLoading] = useState(true);
-  const [email, setEmail] = useState('');
-  const [name, setName] = useState('');
-  const [adding, setAdding] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
     loadInterviewers();
@@ -29,30 +26,23 @@ export default function InterviewersPage() {
     setLoading(false);
   }
 
-  async function addInterviewer() {
-    if (!email || !name) return;
-    setAdding(true);
+  async function syncFromWorkspace() {
+    setSyncing(true);
     try {
-      const res = await fetch('/api/admin/interviewers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, name }),
-      });
+      const res = await fetch('/api/admin/sync-users', { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setInterviewers((prev) => [...prev, data.interviewer]);
-      setEmail('');
-      setName('');
-      toast.success(`${name} added successfully`);
+      toast.success(`Synced ${data.synced} users from Google Workspace`);
+      await loadInterviewers();
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Failed to add interviewer');
+      toast.error(err instanceof Error ? err.message : 'Sync failed');
     } finally {
-      setAdding(false);
+      setSyncing(false);
     }
   }
 
   async function removeInterviewer(id: string, name: string) {
-    if (!confirm(`Remove ${name} from the system?`)) return;
+    if (!confirm(`Remove ${name}?`)) return;
     const res = await fetch(`/api/admin/interviewers?id=${id}`, { method: 'DELETE' });
     if (res.ok) {
       setInterviewers((prev) => prev.filter((iv) => iv.id !== id));
@@ -60,91 +50,78 @@ export default function InterviewersPage() {
     }
   }
 
+  const filtered = interviewers.filter(
+    (iv) =>
+      iv.name.toLowerCase().includes(search.toLowerCase()) ||
+      iv.email.toLowerCase().includes(search.toLowerCase())
+  );
+
   return (
     <div className="max-w-3xl">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-          <Users className="h-6 w-6" /> Interviewers
-        </h1>
-        <p className="text-gray-500 text-sm mt-1">
-          Add team members by email. Their Google Calendar availability is read automatically via Google Workspace admin access — no sign-in required.
-        </p>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+            <Users className="h-6 w-6" /> Interviewers
+          </h1>
+          <p className="text-gray-500 text-sm mt-1">
+            All active users from your Google Workspace — calendar availability is read automatically.
+          </p>
+        </div>
+        <Button onClick={syncFromWorkspace} disabled={syncing}>
+          <RefreshCw className={`h-4 w-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
+          {syncing ? `Syncing...` : 'Sync from Google Workspace'}
+        </Button>
       </div>
 
-      {/* Add form */}
-      <Card className="mb-8">
-        <CardHeader>
-          <CardTitle className="text-base">Add Interviewer</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex gap-3">
-            <div className="flex-1">
-              <Label htmlFor="name" className="text-xs mb-1">Name</Label>
-              <Input
-                id="name"
-                placeholder="Jane Smith"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </div>
-            <div className="flex-1">
-              <Label htmlFor="email" className="text-xs mb-1">Work Email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="jane@company.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && addInterviewer()}
-              />
-            </div>
-            <div className="flex items-end">
-              <Button onClick={addInterviewer} disabled={adding || !email || !name}>
-                <UserPlus className="h-4 w-4 mr-2" />
-                {adding ? 'Adding...' : 'Add'}
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Search */}
+      <div className="relative mb-4">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+        <Input
+          placeholder="Search by name or email..."
+          className="pl-9"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+      </div>
 
       {/* List */}
       {loading ? (
         <div className="space-y-2">
-          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-14 w-full" />)}
+          {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-14 w-full" />)}
         </div>
       ) : interviewers.length === 0 ? (
-        <div className="text-center py-12 text-gray-400">
-          <Users className="h-10 w-10 mx-auto mb-2 opacity-30" />
-          <p>No interviewers yet. Add your first one above.</p>
+        <div className="text-center py-16 text-gray-400">
+          <Users className="h-12 w-12 mx-auto mb-3 opacity-30" />
+          <p className="font-medium">No interviewers yet</p>
+          <p className="text-sm mt-1">Click &quot;Sync from Google Workspace&quot; to import your entire org automatically.</p>
         </div>
       ) : (
-        <div className="space-y-2">
-          {interviewers.map((iv) => (
-            <div
-              key={iv.id}
-              className="flex items-center justify-between p-4 bg-white border rounded-lg"
-            >
-              <div>
-                <p className="font-medium text-gray-900">{iv.name}</p>
-                <p className="text-sm text-gray-500">{iv.email}</p>
+        <>
+          <p className="text-xs text-gray-400 mb-3">{filtered.length} of {interviewers.length} users</p>
+          <div className="space-y-2">
+            {filtered.map((iv) => (
+              <div key={iv.id} className="flex items-center justify-between p-4 bg-white border rounded-lg">
+                <div>
+                  <p className="font-medium text-gray-900">{iv.name}</p>
+                  <p className="text-sm text-gray-500">{iv.email}</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Badge variant="secondary" className="text-green-700 bg-green-50">
+                    Calendar connected
+                  </Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => removeInterviewer(iv.id, iv.name)}
+                    className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
-              <div className="flex items-center gap-3">
-                <Badge variant="secondary" className="text-green-700 bg-green-50">
-                  Calendar connected
-                </Badge>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => removeInterviewer(iv.id, iv.name)}
-                  className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
