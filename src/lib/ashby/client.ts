@@ -33,25 +33,40 @@ export async function listCandidates(params: {
   cursor?: string;
   limit?: number;
 }): Promise<{ candidates: AshbyCandidate[]; nextCursor?: string }> {
-  const body: Record<string, unknown> = { limit: params.limit ?? 50 };
+  // Use application.list so we get job/stage info per record and can filter by status
+  const body: Record<string, unknown> = { limit: params.limit ?? 100 };
   if (params.jobId) body.jobId = params.jobId;
   if (params.cursor) body.cursor = params.cursor;
 
   const data = await ashbyPost<{
     results: Array<{
       id: string;
-      name: string;
-      emailAddresses?: Array<{ value: string; type?: string }>;
-      applicationIds?: string[];
+      status: string; // Active | Hired | Archived | Lead
+      candidate: {
+        id: string;
+        name: string;
+        emailAddresses?: Array<{ value: string }>;
+      };
+      job?: { id: string; title: string };
+      currentInterviewStage?: { id: string; title: string };
     }>;
     nextCursor?: string;
-  }>('/candidate.list', body);
+  }>('/application.list', body);
 
-  const candidates: AshbyCandidate[] = (data.results ?? []).map((c) => ({
-    id: c.id,
-    name: c.name,
-    email: c.emailAddresses?.[0]?.value ?? '',
-    applicationId: c.applicationIds?.[0],
+  // Only show active candidates — exclude hired and archived/rejected
+  const active = (data.results ?? []).filter(
+    (app) => app.status !== 'Hired' && app.status !== 'Archived'
+  );
+
+  const candidates: AshbyCandidate[] = active.map((app) => ({
+    id: app.candidate.id,
+    name: app.candidate.name,
+    email: app.candidate.emailAddresses?.[0]?.value ?? '',
+    applicationId: app.id,
+    jobTitle: app.job?.title,
+    jobId: app.job?.id,
+    currentStage: app.currentInterviewStage?.title,
+    currentStageId: app.currentInterviewStage?.id,
   }));
 
   return { candidates, nextCursor: data.nextCursor };
