@@ -17,15 +17,22 @@ export default function CandidatesPage() {
   useEffect(() => {
     fetch('/api/ashby/candidates')
       .then((r) => r.json())
-      .then((data) => setCandidates(data.candidates ?? []))
-      .finally(() => setLoading(false));
+      .then((data) => {
+        setCandidates(data.candidates ?? []);
+        setLoading(false);
+
+        // After list is shown, enrich each candidate with job/stage info in the background
+        const raw: AshbyCandidate[] = data.candidates ?? [];
+        enrichCandidates(raw, setCandidates);
+      });
   }, []);
 
   const filtered = candidates.filter(
     (c) =>
       c.name.toLowerCase().includes(search.toLowerCase()) ||
       c.email.toLowerCase().includes(search.toLowerCase()) ||
-      (c.jobTitle ?? '').toLowerCase().includes(search.toLowerCase())
+      (c.jobTitle ?? '').toLowerCase().includes(search.toLowerCase()) ||
+      (c.currentStage ?? '').toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -42,7 +49,7 @@ export default function CandidatesPage() {
       <div className="relative mb-6">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
         <Input
-          placeholder="Search by name, email, or role..."
+          placeholder="Search by name, email, role, or stage..."
           className="pl-9"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -51,7 +58,7 @@ export default function CandidatesPage() {
 
       {loading ? (
         <div className="space-y-3">
-          {Array.from({ length: 6 }).map((_, i) => (
+          {Array.from({ length: 8 }).map((_, i) => (
             <Skeleton key={i} className="h-20 w-full rounded-lg" />
           ))}
         </div>
@@ -89,4 +96,33 @@ export default function CandidatesPage() {
       )}
     </div>
   );
+}
+
+// Enrich candidates with job/stage in background batches — doesn't block the list
+async function enrichCandidates(
+  candidates: AshbyCandidate[],
+  setCandidates: React.Dispatch<React.SetStateAction<AshbyCandidate[]>>
+) {
+  const BATCH = 10;
+  for (let i = 0; i < candidates.length; i += BATCH) {
+    const batch = candidates.slice(i, i + BATCH);
+    const enriched = await Promise.all(
+      batch.map(async (c) => {
+        if (!c.applicationId) return c;
+        try {
+          const res = await fetch(`/api/ashby/candidates/${c.id}`);
+          const data = await res.json();
+          return data.candidate ?? c;
+        } catch {
+          return c;
+        }
+      })
+    );
+    // Merge enriched data back into state
+    setCandidates((prev) => {
+      const map = new Map(prev.map((p) => [p.id, p]));
+      for (const e of enriched) map.set(e.id, e);
+      return Array.from(map.values());
+    });
+  }
 }

@@ -1,104 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { AshbyCandidate } from '@/types';
 
-const ASHBY_API_BASE = 'https://api.ashbyhq.com';
-
-type AppResult = {
-  id: string;
-  status: string;
-  candidate: {
-    id: string;
-    name: string;
-    primaryEmailAddress?: { value: string };
-  };
-  job?: { id: string; title: string };
-  currentInterviewStage?: { id: string; title: string; orderInInterviewPlan?: number };
-};
-
-async function fetchAllApplicationsByStatus(
-  status: string,
-  jobId?: string
-): Promise<AppResult[]> {
-  const API_KEY = process.env.ASHBY_API_KEY!;
-  const credentials = Buffer.from(`${API_KEY}:`).toString('base64');
-
-  const post = (body: object) =>
-    fetch(`${ASHBY_API_BASE}/application.list`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${credentials}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    }).then((r) => r.json());
-
-  // Only fetch applications created in the last 18 months — eliminates Lever migration
-  // historical noise (2020-era data) and keeps only real current pipeline candidates
-  const cutoff = new Date();
-  cutoff.setMonth(cutoff.getMonth() - 18);
-  const createdAfterDate = cutoff.toISOString();
-
-  const all: AppResult[] = [];
-  let cursor: string | undefined;
-
-  do {
-    const body: Record<string, unknown> = { status, limit: 100, createdAfterDate };
-    if (jobId) body.jobId = jobId;
-    if (cursor) body.cursor = cursor;
-
-    const data = await post(body);
-    if (!data.success) break;
-    all.push(...(data.results ?? []));
-    cursor = data.nextCursor;
-  } while (cursor && all.length < 5000);
-
-  return all;
+function ashbyPost(endpoint: string, body: object) {
+  const credentials = Buffer.from(`${process.env.ASHBY_API_KEY!}:`).toString('base64');
+  return fetch(`https://api.ashbyhq.com${endpoint}`, {
+    method: 'POST',
+    headers: { Authorization: `Basic ${credentials}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then((r) => r.json());
 }
 
-export async function GET(req: NextRequest) {
+export async function GET(_req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
-    const jobId = searchParams.get('jobId') ?? undefined;
+    // candidate.list returns one record per PERSON — no duplicates, no status issues
+    const all: Array<{
+      id: string;
+      name: string;
+      emailAddresses?: Array<{ value: string }>;
+      applicationIds?: string[];
+    }> = [];
 
-    // Paginate through ALL Active and Lead applications independently (each has its own cursor)
-    const [activeApps, leadApps] = await Promise.all([
-      fetchAllApplicationsByStatus('Active', jobId),
-      fetchAllApplicationsByStatus('Lead', jobId),
-    ]);
+    let cursor: string | undefined;
+    do {
+      const body: Record<string, unknown> = { limit: 100 };
+      if (cursor) body.cursor = cursor;
+      const data = await ashbyPost('/candidate.list', body);
+      if (!data.success) break;
+      all.push(...(data.results ?? []));
+      cursor = data.nextCursor;
+    } while (cursor && all.length < 10000);
 
-    const allApps = [...activeApps, ...leadApps];
-
-    // Deduplicate by candidate ID — keep application with most advanced stage
-    const byCandidate = new Map<string, AppResult>();
-    for (const app of allApps) {
-      const cid = app.candidate.id;
-      const existing = byCandidate.get(cid);
-      if (!existing) {
-        byCandidate.set(cid, app);
-      } else {
-        const existingOrder = existing.currentInterviewStage?.orderInInterviewPlan ?? -1;
-        const newOrder = app.currentInterviewStage?.orderInInterviewPlan ?? -1;
-        if (newOrder > existingOrder) byCandidate.set(cid, app);
-      }
-    }
-
-    const candidates: AshbyCandidate[] = Array.from(byCandidate.values()).map((app) => ({
-      id: app.candidate.id,
-      name: app.candidate.name,
-      email: app.candidate.primaryEmailAddress?.value ?? '',
-      applicationId: app.id,
-      jobTitle: app.job?.title,
-      jobId: app.job?.id,
-      currentStage: app.currentInterviewStage?.title,
-      currentStageId: app.currentInterviewStage?.id,
-    }));
-
-    // Sort by stage order descending so furthest-along candidates appear first
-    candidates.sort((a, b) => {
-      const aOrder = allApps.find((x) => x.id === a.applicationId)?.currentInterviewStage?.orderInInterviewPlan ?? 0;
-      const bOrder = allApps.find((x) => x.id === b.applicationId)?.currentInterviewStage?.orderInInterviewPlan ?? 0;
-      return bOrder - aOrder;
-    });
+    // Map to the shape the frontend expects
+    // Job/stage info is fetched on-demand when clicking into a candidate
+    const candidates = all
+      .filter((c) => c.applicationIds && c.applicationIds.length > 0)
+      .map((c) => ({
+        id: c.id,
+        name: c.name,
+        email: c.emailAddresses?.[0]?.value ?? '',
+        applicationId: c.applicationIds![c.applicationIds!.length - 1], // most recent
+      }));
 
     return NextResponse.json({ candidates, total: candidates.length });
   } catch (err) {
