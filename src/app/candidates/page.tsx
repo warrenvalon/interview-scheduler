@@ -1,128 +1,99 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import Link from 'next/link';
-import { AshbyCandidate } from '@/types';
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Users, Search, Calendar } from 'lucide-react';
+import { Card, CardContent } from '@/components/ui/card';
+import { Users, Search, ArrowRight, AlertCircle } from 'lucide-react';
 
 export default function CandidatesPage() {
-  const [candidates, setCandidates] = useState<AshbyCandidate[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
+  const [email, setEmail] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const router = useRouter();
 
-  useEffect(() => {
-    fetch('/api/ashby/candidates')
-      .then((r) => r.json())
-      .then((data) => {
-        setCandidates(data.candidates ?? []);
-        setLoading(false);
+  async function handleSearch(e: React.FormEvent) {
+    e.preventDefault();
+    if (!email.trim()) return;
+    setLoading(true);
+    setError('');
 
-        // After list is shown, enrich each candidate with job/stage info in the background
-        const raw: AshbyCandidate[] = data.candidates ?? [];
-        enrichCandidates(raw, setCandidates);
+    try {
+      const res = await fetch('/api/ashby/find-candidate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim() }),
       });
-  }, []);
+      const data = await res.json();
 
-  const filtered = candidates.filter(
-    (c) =>
-      c.name.toLowerCase().includes(search.toLowerCase()) ||
-      c.email.toLowerCase().includes(search.toLowerCase()) ||
-      (c.jobTitle ?? '').toLowerCase().includes(search.toLowerCase()) ||
-      (c.currentStage ?? '').toLowerCase().includes(search.toLowerCase())
-  );
+      if (!res.ok) {
+        setError(data.error ?? 'Candidate not found. Check the email and try again.');
+        return;
+      }
+
+      router.push(`/candidates/${data.candidateId}/schedule`);
+    } catch {
+      setError('Something went wrong. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
-    <div className="max-w-5xl">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <Users className="h-6 w-6" /> Candidates
-          </h1>
-          <p className="text-gray-500 text-sm mt-1">Select a candidate to schedule their interview</p>
-        </div>
+    <div className="max-w-lg">
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+          <Users className="h-6 w-6" /> Schedule Interview
+        </h1>
+        <p className="text-gray-500 text-sm mt-1">
+          Enter the candidate&apos;s email address to pull their info from Ashby and schedule their next interview.
+        </p>
       </div>
 
-      <div className="relative mb-6">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-        <Input
-          placeholder="Search by name, email, role, or stage..."
-          className="pl-9"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-      </div>
+      <Card>
+        <CardContent className="pt-6">
+          <form onSubmit={handleSearch} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Candidate Email
+              </label>
+              <div className="flex gap-3">
+                <Input
+                  type="email"
+                  placeholder="candidate@email.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="flex-1"
+                  autoFocus
+                />
+                <Button type="submit" disabled={loading || !email.trim()}>
+                  {loading ? (
+                    <span className="flex items-center gap-2">
+                      <Search className="h-4 w-4 animate-pulse" /> Searching...
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-2">
+                      Find <ArrowRight className="h-4 w-4" />
+                    </span>
+                  )}
+                </Button>
+              </div>
+            </div>
 
-      {loading ? (
-        <div className="space-y-3">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <Skeleton key={i} className="h-20 w-full rounded-lg" />
-          ))}
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="text-center py-16 text-gray-400">
-          <Users className="h-12 w-12 mx-auto mb-3 opacity-30" />
-          <p>No candidates found</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {filtered.map((candidate) => (
-            <Link key={candidate.id} href={`/candidates/${candidate.id}/schedule`}>
-              <Card className="hover:shadow-md hover:border-blue-400 transition-all cursor-pointer">
-                <CardContent className="flex items-center justify-between py-4 px-5">
-                  <div>
-                    <p className="font-semibold text-gray-900">{candidate.name}</p>
-                    <p className="text-sm text-gray-500">{candidate.email}</p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {candidate.jobTitle && (
-                      <Badge variant="secondary">{candidate.jobTitle}</Badge>
-                    )}
-                    {candidate.currentStage && (
-                      <Badge variant="outline" className="text-blue-600 border-blue-300">
-                        {candidate.currentStage}
-                      </Badge>
-                    )}
-                    <Calendar className="h-4 w-4 text-gray-400" />
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
-        </div>
-      )}
+            {error && (
+              <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                {error}
+              </div>
+            )}
+          </form>
+        </CardContent>
+      </Card>
+
+      <p className="text-xs text-gray-400 mt-4 text-center">
+        Candidate data is pulled live from Ashby HQ
+      </p>
     </div>
   );
-}
-
-// Enrich candidates with job/stage in background batches — doesn't block the list
-async function enrichCandidates(
-  candidates: AshbyCandidate[],
-  setCandidates: React.Dispatch<React.SetStateAction<AshbyCandidate[]>>
-) {
-  const BATCH = 10;
-  for (let i = 0; i < candidates.length; i += BATCH) {
-    const batch = candidates.slice(i, i + BATCH);
-    const enriched = await Promise.all(
-      batch.map(async (c) => {
-        if (!c.applicationId) return c;
-        try {
-          const res = await fetch(`/api/ashby/candidates/${c.id}`);
-          const data = await res.json();
-          return data.candidate ?? c;
-        } catch {
-          return c;
-        }
-      })
-    );
-    // Merge enriched data back into state
-    setCandidates((prev) => {
-      const map = new Map(prev.map((p) => [p.id, p]));
-      for (const e of enriched) map.set(e.id, e);
-      return Array.from(map.values());
-    });
-  }
 }
