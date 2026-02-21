@@ -1,30 +1,59 @@
 import { NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const API_KEY = process.env.ASHBY_API_KEY!;
   const credentials = Buffer.from(`${API_KEY}:`).toString('base64');
+  const jobId = new URL(req.url).searchParams.get('jobId');
 
-  const [jobsRes, candidatesRes] = await Promise.all([
-    fetch('https://api.ashbyhq.com/job.list', {
+  const post = (endpoint: string, body: object) =>
+    fetch(`https://api.ashbyhq.com${endpoint}`, {
       method: 'POST',
       headers: { 'Authorization': `Basic ${credentials}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'Open' }),
-    }),
-    fetch('https://api.ashbyhq.com/candidate.list', {
-      method: 'POST',
-      headers: { 'Authorization': `Basic ${credentials}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ limit: 1 }),
-    }),
+      body: JSON.stringify(body),
+    }).then((r) => r.json());
+
+  const [jobs, candidates] = await Promise.all([
+    post('/job.list', {}),
+    post('/candidate.list', { limit: 3 }),
   ]);
 
-  const jobs = await jobsRes.json();
-  const candidates = await candidatesRes.json();
+  // If jobId provided, also test the interview plan endpoint
+  let interviewPlanJobId = null;
+  let interviewPlanId = null;
+  let interviewStageList = null;
+  if (jobId) {
+    [interviewPlanJobId, interviewPlanId, interviewStageList] = await Promise.all([
+      post('/jobInterviewPlan.info', { jobId }),
+      post('/jobInterviewPlan.info', { id: jobId }),
+      post('/interviewStage.list', { jobId }).catch(() => null),
+    ]);
+  }
 
-  // Return raw responses so we can see exact field names
+  // Helper to show structure without full data
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const summarize = (obj: any, depth = 0): unknown => {
+    if (depth > 4 || obj === null || obj === undefined) return obj;
+    if (Array.isArray(obj)) return `[Array(${obj.length})] first: ${JSON.stringify(summarize(obj[0], depth + 1))}`;
+    if (typeof obj === 'object') {
+      const out: Record<string, unknown> = {};
+      for (const k of Object.keys(obj)) out[k] = summarize(obj[k], depth + 1);
+      return out;
+    }
+    return obj;
+  };
+
   return NextResponse.json({
-    jobs_raw: jobs,
-    candidates_raw: candidates,
-    first_candidate_keys: candidates?.results?.[0] ? Object.keys(candidates.results[0]) : [],
+    first_job: jobs?.results?.[0] ?? null,
     first_job_keys: jobs?.results?.[0] ? Object.keys(jobs.results[0]) : [],
+    total_jobs: jobs?.results?.length ?? 0,
+    first_candidate_keys: candidates?.results?.[0] ? Object.keys(candidates.results[0]) : [],
+    candidate_count: candidates?.results?.length ?? 0,
+    candidates_more: candidates?.moreDataAvailable,
+    ...(jobId ? {
+      interview_plan_jobId_param: summarize(interviewPlanJobId),
+      interview_plan_id_param: summarize(interviewPlanId),
+      interview_stage_list: summarize(interviewStageList),
+    } : { hint: 'Add ?jobId=<id> to test interview stages' }),
   });
 }

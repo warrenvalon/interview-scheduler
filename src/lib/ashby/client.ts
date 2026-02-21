@@ -118,34 +118,64 @@ export async function listJobs(): Promise<AshbyJob[]> {
   }));
 }
 
-export async function getInterviewStages(jobId: string): Promise<AshbyInterviewStage[]> {
-  const data = await ashbyPost<{
-    results?: {
-      interviewPlan?: {
-        phaseGroups?: Array<{
-          interviewStages?: Array<{
-            id: string;
-            title: string;
-            type: string;
-            orderIndex: number;
-          }>;
-        }>;
-      };
-    };
-  }>('/jobInterviewPlan.info', { jobId });
-
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractStages(data: any): AshbyInterviewStage[] {
   const stages: AshbyInterviewStage[] = [];
+
+  // Structure A: results.interviewPlan.phaseGroups[].interviewStages[]
   for (const group of data.results?.interviewPlan?.phaseGroups ?? []) {
     for (const stage of group.interviewStages ?? []) {
-      stages.push({
-        id: stage.id,
-        title: stage.title,
-        type: stage.type,
-        orderIndex: stage.orderIndex,
-      });
+      stages.push({ id: stage.id, title: stage.title, type: stage.type ?? '', orderIndex: stage.orderIndex ?? 0 });
     }
   }
-  return stages.sort((a, b) => a.orderIndex - b.orderIndex);
+  if (stages.length > 0) return stages;
+
+  // Structure B: results.phaseGroups[].interviewStages[]
+  for (const group of data.results?.phaseGroups ?? []) {
+    for (const stage of group.interviewStages ?? []) {
+      stages.push({ id: stage.id, title: stage.title, type: stage.type ?? '', orderIndex: stage.orderIndex ?? 0 });
+    }
+  }
+  if (stages.length > 0) return stages;
+
+  // Structure C: results.interviewStages[]
+  for (const stage of data.results?.interviewStages ?? []) {
+    stages.push({ id: stage.id, title: stage.title, type: stage.type ?? '', orderIndex: stage.orderIndex ?? 0 });
+  }
+  if (stages.length > 0) return stages;
+
+  // Structure D: results is an array of stages
+  if (Array.isArray(data.results)) {
+    for (const stage of data.results) {
+      if (stage.id && stage.title) {
+        stages.push({ id: stage.id, title: stage.title, type: stage.type ?? '', orderIndex: stage.orderIndex ?? 0 });
+      }
+    }
+  }
+
+  return stages;
+}
+
+export async function getInterviewStages(jobId: string): Promise<AshbyInterviewStage[]> {
+  // Try with jobId param first
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = await ashbyPost<any>('/jobInterviewPlan.info', { jobId });
+    const stages = extractStages(data);
+    if (stages.length > 0) return stages.sort((a, b) => a.orderIndex - b.orderIndex);
+  } catch {
+    // fall through to next attempt
+  }
+
+  // Try with id param
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = await ashbyPost<any>('/jobInterviewPlan.info', { id: jobId });
+    const stages = extractStages(data);
+    return stages.sort((a, b) => a.orderIndex - b.orderIndex);
+  } catch {
+    return [];
+  }
 }
 
 export async function getCandidateAvailability(
