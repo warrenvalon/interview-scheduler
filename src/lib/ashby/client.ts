@@ -157,25 +157,31 @@ function extractStages(data: any): AshbyInterviewStage[] {
 }
 
 export async function getInterviewStages(jobId: string): Promise<AshbyInterviewStage[]> {
-  // Try with jobId param first
+  // Step 1: fetch the job to get its interview plan ID
+  // jobInterviewPlan.info requires the plan ID, not the job ID
+  let planId: string | undefined;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const data = await ashbyPost<any>('/jobInterviewPlan.info', { jobId });
-    const stages = extractStages(data);
-    if (stages.length > 0) return stages.sort((a, b) => a.orderIndex - b.orderIndex);
+    const jobData = await ashbyPost<{
+      results?: { defaultInterviewPlanId?: string; interviewPlanIds?: string[] };
+    }>('/job.info', { id: jobId });
+    planId = jobData.results?.defaultInterviewPlanId ?? jobData.results?.interviewPlanIds?.[0];
   } catch {
-    // fall through to next attempt
+    // non-fatal; fall through to direct attempts
   }
 
-  // Try with id param
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const data = await ashbyPost<any>('/jobInterviewPlan.info', { id: jobId });
-    const stages = extractStages(data);
-    return stages.sort((a, b) => a.orderIndex - b.orderIndex);
-  } catch {
-    return [];
+  // Step 2: fetch the interview plan by plan ID
+  if (planId) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const data = await ashbyPost<any>('/jobInterviewPlan.info', { id: planId });
+      const stages = extractStages(data);
+      if (stages.length > 0) return stages.sort((a, b) => a.orderIndex - b.orderIndex);
+    } catch {
+      // fall through
+    }
   }
+
+  return [];
 }
 
 export async function getCandidateAvailability(
